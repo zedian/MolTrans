@@ -12,9 +12,11 @@ def BIN_config_DBPE():
     config['batch_size'] = 4
     config['input_dim_drug'] = 23532
     config['input_dim_target'] = 16693
+    config['input_dim'] = 23532+16693
     config['train_epoch'] = 13
     config['max_drug_seq'] = 50
     config['max_protein_seq'] = 545
+    config['max_len'] = 596
     config['emb_size'] = 256
     config['dropout_rate'] = 0.1
     
@@ -30,5 +32,6 @@ def BIN_config_DBPE():
     config['num_attention_heads'] = 8
     config['attention_probs_dropout_prob'] = 0.1
     config['hidden_dropout_prob'] = 0.1
-    config['flat_dim'] = 78192
+#     config['flat_dim'] = 78192
+    config['flat_dim'] = 152576
     return config

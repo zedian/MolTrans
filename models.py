@@ -13,6 +13,7 @@ torch.manual_seed(1)
 np.random.seed(1)
 
 
+
 class BIN_Interaction_Flat(nn.Sequential):
     '''
         Interaction Network with 2D interaction map
@@ -84,16 +85,19 @@ class BIN_Interaction_Flat(nn.Sequential):
         # set output_all_encoded_layers be false, to obtain the last layer hidden states only...
         
         d_encoded_layers = self.d_encoder(d_emb.float(), ex_d_mask.float())
-        #print(d_encoded_layers.shape)
+        print(d_encoded_layers.shape)
         p_encoded_layers = self.p_encoder(p_emb.float(), ex_p_mask.float())
-        #print(p_encoded_layers.shape)
+        print(p_encoded_layers.shape)
 
         # repeat to have the same tensor size for aggregation   
         d_aug = torch.unsqueeze(d_encoded_layers, 2).repeat(1, 1, self.max_p, 1) # repeat along protein size
         p_aug = torch.unsqueeze(p_encoded_layers, 1).repeat(1, self.max_d, 1, 1) # repeat along drug size
         
         i = d_aug * p_aug # interaction
-        i_v = i.view(int(self.batch_size/self.gpus), -1, self.max_d, self.max_p) 
+#         if self.gpus != 0:
+#             i_v = i.view(int(self.batch_size/self.gpus), -1, self.max_d, self.max_p)
+#         else:
+        i_v = i.view(self.batch_size, -1, self.max_d, self.max_p)
         # batch_size x embed size x max_drug_seq_len x max_protein_seq_len
         i_v = torch.sum(i_v, dim = 1)
         #print(i_v.shape)
@@ -110,13 +114,87 @@ class BIN_Interaction_Flat(nn.Sequential):
         #f = self.dense_net(f)
         #print(f.shape)
         
-        f = f.view(int(self.batch_size/self.gpus), -1)
-        #print(f.shape)
+#         f = f.view(int(self.batch_size/self.gpus), -1)
+        f = f.view(self.batch_size, -1)
+        print(f.shape)
         
         #f_encode = torch.cat((d_encoded_layers[:,-1], p_encoded_layers[:,-1]), dim = 1)
         
         #score = self.decoder(torch.cat((f, f_encode), dim = 1))
         score = self.decoder(f)
+        return score    
+
+class BIN_Transformer_Single(nn.Sequential):
+    '''
+    Simple transformer encoder
+    '''
+    
+    def __init__(self, **config):
+        super(BIN_Transformer_Single, self).__init__()
+        self.max_d = config['max_drug_seq']
+        self.max_p = config['max_protein_seq']
+        self.max_len = config['max_len'] # drug and protein concatenated
+
+        self.emb_size = config['emb_size']
+        self.dropout_rate = config['dropout_rate']
+        
+        #densenet
+        self.scale_down_ratio = config['scale_down_ratio']
+        self.growth_rate = config['growth_rate']
+        self.transition_rate = config['transition_rate']
+        self.num_dense_blocks = config['num_dense_blocks']
+        self.kernal_dense_size = config['kernal_dense_size']
+        self.batch_size = config['batch_size']
+        self.input_dim = config['input_dim']
+        self.gpus = torch.cuda.device_count()
+        self.n_layer = 2
+        #encoder
+        self.hidden_size = config['emb_size']
+        self.intermediate_size = config['intermediate_size']
+        self.num_attention_heads = config['num_attention_heads']
+        self.attention_probs_dropout_prob = config['attention_probs_dropout_prob']
+        self.hidden_dropout_prob = config['hidden_dropout_prob']
+        
+        self.flatten_dim = config['flat_dim'] 
+        
+        # specialized embedding with positional one
+        self.emb = Embeddings(self.input_dim, self.emb_size, self.max_len, self.dropout_rate)
+        
+        self.encoder = Encoder_MultipleLayers(self.n_layer, self.hidden_size, self.intermediate_size, self.num_attention_heads, self.attention_probs_dropout_prob, self.hidden_dropout_prob)
+        
+        self.decoder = nn.Sequential(
+            nn.Linear(self.flatten_dim, 512),
+            nn.ReLU(True),
+            
+            nn.BatchNorm1d(512),
+            nn.Linear(512, 64),
+            nn.ReLU(True),
+            
+            nn.BatchNorm1d(64),
+            nn.Linear(64, 32),
+            nn.ReLU(True),
+            
+            #output layer
+            nn.Linear(32, 1)
+        )
+        
+    def forward(self, x,  mask):
+        
+        ex_mask = mask.unsqueeze(1).unsqueeze(2)
+        
+        ex_mask = (1.0 - ex_mask) * -10000.0
+        
+        emb = self.emb(x) # batch_size x seq_length x embed_size
+        # set output_all_encoded_layers be false, to obtain the last layer hidden states only...
+        
+        encoded_layers = self.encoder(emb.float(), ex_mask.float())
+
+        # repeat to have the same tensor size for aggregation   
+#         aug = torch.unsqueeze(encoded_layers, 2).repeat(1, 1, self.max_len, 1) # repeat along protein size
+#         print(aug.shape)
+        #score = self.decoder(torch.cat((f, f_encode), dim = 1))
+        encoded_layers = encoded_layers.view(self.batch_size, -1)
+        score = self.decoder(encoded_layers)
         return score    
    
 # help classes    
